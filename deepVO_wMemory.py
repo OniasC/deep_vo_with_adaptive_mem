@@ -1,7 +1,6 @@
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
-import models
 
 import numpy as np
 
