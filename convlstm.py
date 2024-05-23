@@ -3,7 +3,9 @@ import torch
 
 
 class ConvLSTMCell(nn.Module):
-
+    '''
+    https://github.com/ndrplz/ConvLSTM_pytorch
+    '''
     def __init__(self, input_dim, hidden_dim, kernel_size, bias):
         """
         Initialize ConvLSTM cell.
@@ -131,6 +133,8 @@ class ConvLSTM(nn.Module):
         -------
         last_state_list, layer_output
         """
+        print(input_tensor)
+        print(input_tensor.shape)
         if not self.batch_first:
             # (t, b, c, h, w) -> (b, t, c, h, w)
             input_tensor = input_tensor.permute(1, 0, 2, 3, 4)

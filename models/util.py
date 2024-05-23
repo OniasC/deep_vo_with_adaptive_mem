@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 
+'''
 try:
     from spatial_correlation_sampler import spatial_correlation_sample
 except ImportError as e:
@@ -12,7 +13,7 @@ except ImportError as e:
             "failed to load custom correlation module" "which is needed for FlowNetC",
             ImportWarning,
         )
-
+'''
 
 def conv(batchNorm, in_planes, out_planes, kernel_size=3, stride=1):
     if batchNorm:

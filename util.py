@@ -48,3 +48,38 @@ def flow2rgb(flow_map, max_value):
     rgb_map[1] -= 0.5 * (normalized_flow_map[0] + normalized_flow_map[1])
     rgb_map[2] += normalized_flow_map[1]
     return rgb_map.clip(0, 1)
+
+def read_gt_file_to_dict(file_path):
+    result_dict = {}
+
+    with open(file_path, 'r') as file:
+        for line in file:
+            # Skip comments and empty lines
+            if line.startswith('#') or line.strip() == '':
+                continue
+
+            # Split the line into parts
+            parts = line.strip().split()
+            if len(parts) == 8:
+                timestamp = parts[0]
+                values = tuple(map(float, parts[1:]))  # Convert the rest to float and store in a tuple
+                result_dict[float(timestamp)] = values
+
+    return result_dict
+
+def read_rgb_file_to_dict(file_path):
+    result_dict = {}
+
+    with open(file_path, 'r') as file:
+        for line in file:
+            # Skip comments and empty lines
+            if line.startswith('#') or line.strip() == '':
+                continue
+
+            # Split the line into timestamp and filename
+            parts = line.strip().split()
+            if len(parts) == 2:
+                timestamp, filename = parts
+                result_dict[float(timestamp)] = filename
+
+    return result_dict
