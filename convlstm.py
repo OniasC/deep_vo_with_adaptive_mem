@@ -133,12 +133,12 @@ class ConvLSTM(nn.Module):
         -------
         last_state_list, layer_output
         """
-        print(input_tensor)
-        print(input_tensor.shape)
+        #print(input_tensor)
+        print("input tensor to convlstm: ", input_tensor.shape)
         if not self.batch_first:
             # (t, b, c, h, w) -> (b, t, c, h, w)
             input_tensor = input_tensor.permute(1, 0, 2, 3, 4)
-
+        print("input tensor size: ", input_tensor.size())
         b, _, _, h, w = input_tensor.size()
 
         # Implement stateful ConvLSTM

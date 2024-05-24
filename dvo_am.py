@@ -93,24 +93,29 @@ def datasetsTrainGet(paths):
 def datasetsTestGet():
     paths = ['datasets/rgbd_dataset_freiburg2_desk/']
 
-def trainModel(model, dataLoader):
+def trainModel(model, dataLoaderTrain, dataLoaderTest):
     # learning rate decays every 60k iterations
     optimizer = optim.Adam(model.parameters(), lr=0.0001, betas=(0.9, 0.99), weight_decay=0.0004)  # Adjust the LR as needed
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=60000, gamma=0.5)
 
     numIterations = 150000
-    print(len(dataLoader))
-    iterPerEpoch = len(dataLoader)
+    print(len(dataLoaderTrain))
+    iterPerEpoch = len(dataLoaderTrain)
     numEpochs = numIterations // iterPerEpoch + 1  # Ensure we have enough epochs
 
     model.train()  # Set the model to training mode
 
     iteration = 0
     for epoch in range(numEpochs):
-        for images, poses in dataLoader:
+
+        train_loss = 0
+        model.train()
+        for images, poses in dataLoaderTrain:
             if iteration >= numIterations:
                 break
             #images, poses = images.cuda(), poses.cuda()  # Move data to GPU if available
+
+            # do i need this below?
             optimizer.zero_grad()  # Zero the parameter gradients
 
             outputs = model(images)
@@ -120,16 +125,28 @@ def trainModel(model, dataLoader):
             loss = lossFunction(outputs, poses)
             loss.backward()  # Backpropagation
             optimizer.step()  # Optimize the parameters
-
-            if iteration % 100 == 0:
-                print(f"Iteration {iteration}/{numIterations}, Loss: {loss.item()}")
+            train_loss += loss.item()
+            #if iteration % 100 == 0:
+            #    print(f"Iteration {iteration}/{numIterations}, Loss: {loss.item()}")
 
             scheduler.step()  # Update the learning rate
 
             iteration += 1
+        train_loss /= len(dataLoaderTrain.dataset)
 
+
+        val_loss = 0
+        model.eval()
+        with torch.no_grad():
+            for input, target in dataLoaderTest:
+                output = model(input)
+                loss = lossFunction(output.flatten(), target.flatten())
+                val_loss += loss.item()
+        val_loss /= len(dataLoaderTest.dataset)
         if iteration >= numIterations:
             break
+        print("Epoch:{} Training Loss:{:.2f} Validation Loss:{:.2f}\n".format(
+            epoch, train_loss, val_loss))
 
     print("Training complete.")
 
@@ -244,24 +261,44 @@ class CustomTUMDataset(Dataset):
         pose = torch.tensor(pose, dtype=torch.float32)
         return image, pose
 
-def main():
-    #need to rerun the datasetsTrainGet if i add more videos to the dataset
-    trainPaths = ['datasets/rgbd_dataset_freiburg1_desk/',\
-                  'datasets/rgbd_dataset_freiburg2_xyz/']
+def datasetsGet(trainPaths, testPaths):
     datasetsTrain = []
     if (os.path.isfile('trainDatasets.pkl') == False):
         datasetsTrain = datasetsTrainGet(trainPaths)
         with open('trainDatasets.pkl', 'wb') as file:
             pickle.dump(datasetsTrain, file)
     else:
-        print("loading pickle file")
+        print("loading train pickle file")
         with open('trainDatasets.pkl', 'rb') as file:
             datasetsTrain = pickle.load(file)
+    datasetsTest = []
+    if (os.path.isfile('testDatasets.pkl') == False):
+        datasetsTest = datasetsTrainGet(testPaths)
+        with open('testDatasets.pkl', 'wb') as file:
+            pickle.dump(datasetsTrain, file)
+    else:
+        print("loading test pickle file")
+        with open('testDatasets.pkl', 'rb') as file:
+            datasetsTest = pickle.load(file)
+
+    return datasetsTrain, datasetsTest
+
+def main():
+    #need to rerun the datasetsTrainGet if i add more videos to the dataset
+    trainPaths = ['datasets/rgbd_dataset_freiburg1_desk/',\
+                  'datasets/rgbd_dataset_freiburg2_xyz/']
+    testPaths = ['datasets/rgbd_dataset_freiburg2_desk/']
+
+    datasetsTrain, datasetsTest = datasetsGet(trainPaths= trainPaths,
+                                              testPaths=testPaths)
     #print(datasetsTrain)
     isTrain = True
     isTest = not isTrain
-    tumDataset = CustomTUMDataset(datasetsTrain)
-    train_loader = torch.utils.data.DataLoader(tumDataset, batch_size=4, shuffle=True)
+
+    tumDatasetTrain = CustomTUMDataset(datasetsTrain)
+    tumDatasetTest = CustomTUMDataset(datasetsTest)
+    train_loader = torch.utils.data.DataLoader(tumDatasetTrain, batch_size=4, shuffle=True)
+    test_loader  = torch.utils.data.DataLoader(tumDatasetTest, batch_size=4, shuffle=True)
     #print(tumDataset.__getitem__(3))
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -270,18 +307,19 @@ def main():
     print("=> using pre-trained model '{}'".format(FlowNet_data["arch"]))
     FlowNetModel = models.__dict__[FlowNet_data["arch"]](FlowNet_data).to(device)
 
-    model2 = DvoAm_EncPlusTrack(batchNorm=False)
+    model2 = DvoAm_EncPlusTrack(device=device, batchNorm=False)
+
     #Capturing the layers we want from FlowNet!
     encodingLayers = ['conv1.0.weight', 'conv2.0.weight', \
-                    'conv3.0.weight', 'conv3_1.0.weight', \
-                    'conv4.0.weight', 'conv4_1.0.weight', \
-                    'conv5.0.weight', 'conv5_1.0.weight', \
-                    'conv6.0.weight',\
-                    'conv1.0.bias', 'conv2.0.bias', \
-                    'conv3.0.bias', 'conv3_1.0.bias', \
-                    'conv4.0.bias', 'conv4_1.0.bias', \
-                    'conv5.0.bias', 'conv5_1.0.bias', \
-                    'conv6.0.bias' ]
+                      'conv3.0.weight', 'conv3_1.0.weight', \
+                      'conv4.0.weight', 'conv4_1.0.weight', \
+                      'conv5.0.weight', 'conv5_1.0.weight', \
+                      'conv6.0.weight',\
+                      'conv1.0.bias', 'conv2.0.bias', \
+                      'conv3.0.bias', 'conv3_1.0.bias', \
+                      'conv4.0.bias', 'conv4_1.0.bias', \
+                      'conv5.0.bias', 'conv5_1.0.bias', \
+                      'conv6.0.bias' ]
     subset_state_dict = {}
     for name, param in FlowNetModel.named_parameters():
         if name in encodingLayers:  # Change 'desired_layer' to the relevant layer names
@@ -300,7 +338,10 @@ def main():
 
 
     if (isTrain):
-        trainModel(model2, train_loader)
+        print("training")
+        trainModel(model2, train_loader, test_loader)
+    else:
+        print("testing")
     exit()
 
     exit()

@@ -7,7 +7,8 @@ import numpy as np
 import torch.nn as nn
 from torch.nn.init import kaiming_normal_, constant_
 
-from convlstm import ConvLSTM
+#from convlstm import ConvLSTM
+from convlstm2 import ConvLSTM
 
 # Creating the model of our Deep Visual Odometry
 
@@ -111,19 +112,25 @@ class DvoAm_Encoder(nn.Module):
 class DvoAm_EncPlusTrack(nn.Module):
     expansion = 1
 
-    def __init__(self, batchNorm=True):
+    def __init__(self, device, batchNorm=True):
         super(DvoAm_EncPlusTrack, self).__init__()
 
         self.batchNorm = batchNorm
         # entrada do tensor das duas imagens H x W x 6 (2 rgb's)
         self.encoding = DvoAm_Encoder(batchNorm)
         # para entrada de 640 x 480 x 6, a saida eh de 10 x 8 x 1024
-        self.convLSTM = ConvLSTM(input_dim = 6, hidden_dim = 1, kernel_size = (3,3), num_layers=1)
-        # convnLTSM nao muda tamanho do tensor
+        # shape of tensor: [4, 1024, 8, 10]. 4 is the batch
+
+        # convlstm.py
+        #self.convLSTM = ConvLSTM(input_dim = 6, hidden_dim = 1, kernel_size = (3,3), num_layers=1, batch_first=True) # what do these inputs mean??
+        # convlstm2.py
+        self.convLSTM = ConvLSTM(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), activation="tanh", frame_size=(8,10),device=device) # what do these inputs mean??
+
+        # convnLTSM nao muda tamanho do tensor.. ou muda??
         self.gap = nn.AdaptiveMaxPool3d((1,1,1024))
         # (1,1,1024)
-        self.fc = nn.Linear(in_features=1024,out_features=6) # should this be 7 because 3 position + 4 quaternions?
-        # a saida eh 6
+        self.fc = nn.Linear(in_features=1024,out_features=7) # should this be 7 because 3 position + 4 quaternions? 6 or 7??
+        # a saida eh 7
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
                 kaiming_normal_(m.weight, 0.1)
@@ -135,6 +142,11 @@ class DvoAm_EncPlusTrack(nn.Module):
 
     def forward(self, x):
         out_encoder = self.encoding(x)
+        print("up to here, fine!")
         print("encoder_out", out_encoder.shape)
-        out_tracking = self.fc(self.gap(self.convLSTM(out_encoder)))
+        # before I enter the next layer, i need to get the size of the the "tail" for the convlstm. and add it to the tensor.
+        # i need to keep up to 11 frames in a sliding window fashion.
+        out_LstmTracking = self.convLSTM(out_encoder)
+        out_GapTracking = self.gap(out_LstmTracking)
+        out_tracking = self.fc(out_GapTracking)
         return out_tracking
