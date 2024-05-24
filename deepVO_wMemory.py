@@ -127,7 +127,8 @@ class DvoAm_EncPlusTrack(nn.Module):
         self.convLSTM = ConvLSTM(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), activation="tanh", frame_size=(8,10),device=device) # what do these inputs mean??
 
         # convnLTSM nao muda tamanho do tensor.. ou muda??
-        self.gap = nn.AdaptiveMaxPool3d((1,1,1024))
+        #self.gap = nn.AdaptiveMaxPool3d((1,1,1024))
+        self.gap = nn.AvgPool3d((1,8,10))
         # (1,1,1024)
         self.fc = nn.Linear(in_features=1024,out_features=7) # should this be 7 because 3 position + 4 quaternions? 6 or 7??
         # a saida eh 7
@@ -142,11 +143,19 @@ class DvoAm_EncPlusTrack(nn.Module):
 
     def forward(self, x):
         out_encoder = self.encoding(x)
-        print("up to here, fine!")
-        print("encoder_out", out_encoder.shape)
+        #print("up to here, fine!")
+        #print("encoder_out", out_encoder.shape)
         # before I enter the next layer, i need to get the size of the the "tail" for the convlstm. and add it to the tensor.
-        # i need to keep up to 11 frames in a sliding window fashion.
-        out_LstmTracking = self.convLSTM(out_encoder)
+        # ~i need to keep up to 11 frames in a sliding window fashion.~
+        # ^ WRONG!!! THIS IS FOR MEMORY - REFINING STAGE. For tracking phase, its only that one set of two frames.
+
+        #transform a [4, 1024, 8, 10] tensor into a [4, 1024, 1, 8, 10]
+        outEncoderExtraDim = out_encoder.unsqueeze(2) # adds a dimension at 3th dim.
+        #print("new dimension: ", outEncoderExtraDim.size())
+        out_LstmTracking = self.convLSTM(outEncoderExtraDim)
         out_GapTracking = self.gap(out_LstmTracking)
+        out_GapTracking = torch.squeeze(out_GapTracking, -1)
+        out_GapTracking = torch.squeeze(out_GapTracking, -1)
+        out_GapTracking = torch.squeeze(out_GapTracking, -1)
         out_tracking = self.fc(out_GapTracking)
         return out_tracking

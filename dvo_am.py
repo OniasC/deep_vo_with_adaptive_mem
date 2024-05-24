@@ -44,6 +44,20 @@ def lossFunction(yPredLocalList, yGtLocalList, yPredGlobalList, yGtGlobalList, k
     loss = lossLocal +  lossGlobal
     return loss
 
+
+def lossFunctionLocal(yPredLocalList, yGtLocalList, k = 1): #TUM uses k = 1
+    lossLocal = 0
+    for batchIndex in range(yPredLocalList.shape[0]):
+        traTensorErr = yPredLocalList[batchIndex][0:3] - yPredLocalList[batchIndex][0:3]
+        rotTensorErr = yPredLocalList[batchIndex][3:7] - yPredLocalList[batchIndex][3:7]
+        #print(traTensorErr)
+        #print(rotTensorErr)
+        traTensor = torch.dot(traTensorErr, traTensorErr)
+        rotTensor = torch.dot(rotTensorErr, rotTensorErr)
+        lossLocal += traTensor + k*rotTensor
+    loss = lossLocal / yPredLocalList.shape[0] # average the loss of all batches
+    return loss
+
 def averagePoseGet(pose1, pose2, distance1, distance2):
     newPose = []
     for i in range(len(pose1)):
@@ -53,7 +67,7 @@ def averagePoseGet(pose1, pose2, distance1, distance2):
         #newPose.append(pose1[i])
     return tuple(newPose)
 
-def datasetsTrainGet(paths):
+def datasetsListGet(paths):
     '''
     need to capture the images and the ground truth
     input: tuple(frame[k-1], frame[k])
@@ -90,8 +104,6 @@ def datasetsTrainGet(paths):
     return datasetIO
 
 
-def datasetsTestGet():
-    paths = ['datasets/rgbd_dataset_freiburg2_desk/']
 
 def trainModel(model, dataLoaderTrain, dataLoaderTest):
     # learning rate decays every 60k iterations
@@ -99,12 +111,12 @@ def trainModel(model, dataLoaderTrain, dataLoaderTest):
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=60000, gamma=0.5)
 
     numIterations = 150000
-    print(len(dataLoaderTrain))
+    #print(len(dataLoaderTrain))
     iterPerEpoch = len(dataLoaderTrain)
     numEpochs = numIterations // iterPerEpoch + 1  # Ensure we have enough epochs
 
     model.train()  # Set the model to training mode
-
+    print('onias3')
     iteration = 0
     for epoch in range(numEpochs):
 
@@ -117,17 +129,17 @@ def trainModel(model, dataLoaderTrain, dataLoaderTest):
 
             # do i need this below?
             optimizer.zero_grad()  # Zero the parameter gradients
-
+            #print('onias4')
             outputs = model(images)
-            print("outputs: ", outputs)
-            print("gt: ", poses)
+            #print("outputs: ", outputs)
+            #print("gt: ", poses)
 
-            loss = lossFunction(outputs, poses)
+            loss = lossFunctionLocal(outputs, poses)
             loss.backward()  # Backpropagation
             optimizer.step()  # Optimize the parameters
             train_loss += loss.item()
-            #if iteration % 100 == 0:
-            #    print(f"Iteration {iteration}/{numIterations}, Loss: {loss.item()}")
+            if iteration % 100 == 0:
+                print(f"Iteration {iteration}/{numIterations}, Loss: {loss.item()}")
 
             scheduler.step()  # Update the learning rate
 
@@ -218,26 +230,15 @@ def train_v2(train_loader, model, optimizer, train_writer, device):
     return losses.avg, flow2_EPEs.avg
 
 
-def ioGet(datasetList):
-    ''' datasetList is a list of tuples:
-        The first element is a tuple of consecutive images
-        The second element is the pose of the images.
-    '''
-    trainX = []
-    trainY = []
-    for dataset in datasetList:
-        print('baa')
-
-    return trainX, trainY
-
 class CustomTUMDataset(Dataset):
     ''' datasetList is a list of tuples:
         The first element is a tuple of consecutive images
         The second element is the pose of the images.
     '''
-    def __init__(self, data_list, transform=None):
+    def __init__(self, data_list, device, transform=None):
         self.data_list = data_list
         self.transform = transform
+        self.device    = device
 
     def __len__(self):
         return len(self.data_list)
@@ -254,17 +255,19 @@ class CustomTUMDataset(Dataset):
         item = self.data_list[idx]
         imagesPaths = item[0]
         pose = item[1]
-        image0 = input_transform(imageio.v2.imread(imagesPaths[0]))
-        image1 = input_transform(imageio.v2.imread(imagesPaths[1]))
+        image0 = input_transform(imageio.v2.imread(imagesPaths[0])).to(self.device)
+        image1 = input_transform(imageio.v2.imread(imagesPaths[1])).to(self.device)
         image = torch.cat([image0, image1])#.unsqueeze(0)
 
         pose = torch.tensor(pose, dtype=torch.float32)
+        image.to(self.device)
+        pose.to(self.device)
         return image, pose
 
 def datasetsGet(trainPaths, testPaths):
     datasetsTrain = []
     if (os.path.isfile('trainDatasets.pkl') == False):
-        datasetsTrain = datasetsTrainGet(trainPaths)
+        datasetsTrain = datasetsListGet(trainPaths)
         with open('trainDatasets.pkl', 'wb') as file:
             pickle.dump(datasetsTrain, file)
     else:
@@ -273,7 +276,7 @@ def datasetsGet(trainPaths, testPaths):
             datasetsTrain = pickle.load(file)
     datasetsTest = []
     if (os.path.isfile('testDatasets.pkl') == False):
-        datasetsTest = datasetsTrainGet(testPaths)
+        datasetsTest = datasetsListGet(testPaths)
         with open('testDatasets.pkl', 'wb') as file:
             pickle.dump(datasetsTrain, file)
     else:
@@ -284,7 +287,11 @@ def datasetsGet(trainPaths, testPaths):
     return datasetsTrain, datasetsTest
 
 def main():
-    #need to rerun the datasetsTrainGet if i add more videos to the dataset
+
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    print("device: ", device)
+
+    #need to rerun the datasetsGet if i add more videos to the dataset
     trainPaths = ['datasets/rgbd_dataset_freiburg1_desk/',\
                   'datasets/rgbd_dataset_freiburg2_xyz/']
     testPaths = ['datasets/rgbd_dataset_freiburg2_desk/']
@@ -295,20 +302,20 @@ def main():
     isTrain = True
     isTest = not isTrain
 
-    tumDatasetTrain = CustomTUMDataset(datasetsTrain)
-    tumDatasetTest = CustomTUMDataset(datasetsTest)
+    tumDatasetTrain = CustomTUMDataset(datasetsTrain,device)
+    tumDatasetTest = CustomTUMDataset(datasetsTest,device)
     train_loader = torch.utils.data.DataLoader(tumDatasetTrain, batch_size=4, shuffle=True)
     test_loader  = torch.utils.data.DataLoader(tumDatasetTest, batch_size=4, shuffle=True)
     #print(tumDataset.__getitem__(3))
 
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
     FlowNet_data = torch.load('flownets_EPE1.951.pth',map_location=torch.device('cpu'))
     print("=> using pre-trained model '{}'".format(FlowNet_data["arch"]))
     FlowNetModel = models.__dict__[FlowNet_data["arch"]](FlowNet_data).to(device)
+    FlowNetModel.to(device)
 
     model2 = DvoAm_EncPlusTrack(device=device, batchNorm=False)
-
+    model2.to(device)
     #Capturing the layers we want from FlowNet!
     encodingLayers = ['conv1.0.weight', 'conv2.0.weight', \
                       'conv3.0.weight', 'conv3_1.0.weight', \
@@ -326,7 +333,7 @@ def main():
             subset_state_dict[name] = param
     #print(subset_state_dict)
 
-
+    print('onias1')
     new_state_dict = model2.state_dict()
     for name, param in subset_state_dict.items():
         #print(name)
@@ -335,30 +342,14 @@ def main():
             new_state_dict[newName].copy_(param) #copy_() performs copy in place
     print(new_state_dict.keys())
     model2.load_state_dict(new_state_dict)
-
+    print('onias2')
 
     if (isTrain):
         print("training")
         trainModel(model2, train_loader, test_loader)
     else:
         print("testing")
-    exit()
 
-    exit()
-
-    input_transform = transforms.Compose(
-        [
-            flow_transforms.ArrayToTensor(),
-            transforms.Normalize(mean=[0, 0, 0], std=[255, 255, 255]),
-            transforms.Normalize(mean=[0.411, 0.432, 0.45], std=[1, 1, 1]),
-        ]
-    )
-
-
-
-    img1 = input_transform(imread(img1_file))
-    img2 = input_transform(imread(img2_file))
-    input_var = torch.cat([img1, img2]).unsqueeze(0)
 
 
 if __name__ == "__main__":

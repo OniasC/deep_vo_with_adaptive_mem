@@ -21,10 +21,9 @@ class ConvLSTMCell(nn.Module):
         elif activation == "relu":
             self.activation = torch.relu
 
-        # Idea adapted from https://github.com/ndrplz/ConvLSTM_pytorch
         self.conv = nn.Conv2d(
-            in_channels=in_channels + out_channels,
-            out_channels=4 * out_channels, # why 4?!
+            in_channels=in_channels + out_channels, #we're doing conv of X and H_{k-1} together!
+            out_channels=4 * out_channels, # why 4?! read above!
             kernel_size=kernel_size,
             padding=padding)
 
@@ -36,7 +35,8 @@ class ConvLSTMCell(nn.Module):
     def forward(self, X, H_prev, C_prev):
 
         # Idea adapted from https://github.com/ndrplz/ConvLSTM_pytorch
-        conv_output = self.conv(torch.cat([X, H_prev], dim=1))
+        concatXandH = torch.cat([X, H_prev], dim=1)
+        conv_output = self.conv(concatXandH)
 
         # Idea adapted from https://github.com/ndrplz/ConvLSTM_pytorch
         i_conv, f_conv, C_conv, o_conv = torch.chunk(conv_output, chunks=4, dim=1)
@@ -73,7 +73,7 @@ class ConvLSTM(nn.Module):
         # X is a frame sequence (batch_size, num_channels, seq_len, height, width)
 
         # Get the dimensions
-        print("input size: ", X.size())
+        #print("input size: ", X.size())
         batch_size, _, seq_len, height, width = X.size()
 
         # Initialize output
