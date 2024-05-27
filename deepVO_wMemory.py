@@ -87,19 +87,19 @@ class DvoAm_Encoder(nn.Module):
 
     def forward(self, x):
         out_conv1   = self.conv1(x)
-        print("out_conv1 ", out_conv1.shape)
+        #print("out_conv1 ", out_conv1.shape)
         out_conv2   = self.conv2(out_conv1)
-        print("out_conv2 ", out_conv2.shape)
+        #print("out_conv2 ", out_conv2.shape)
         out_conv3   = self.conv3(out_conv2)
-        print("out_conv3 ", out_conv3.shape)
+        #print("out_conv3 ", out_conv3.shape)
         out_conv3_1 = self.conv3_1(out_conv3)
-        print("out_conv3_1 ", out_conv3_1.shape)
+        #print("out_conv3_1 ", out_conv3_1.shape)
         out_conv4 = self.conv4(out_conv3_1)
         out_conv4_1 = self.conv4_1(out_conv4)
-        print("out_conv4_1 ", out_conv4_1.shape)
+        #print("out_conv4_1 ", out_conv4_1.shape)
         out_conv5 = self.conv5(out_conv4_1)
         out_conv5_1 = self.conv5_1(out_conv5)
-        print("out_conv5_1 ", out_conv5_1.shape)
+        #print("out_conv5_1 ", out_conv5_1.shape)
         out_conv6 = self.conv6(out_conv5_1)
         return out_conv6
 

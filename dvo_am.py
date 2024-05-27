@@ -8,6 +8,7 @@ from imageio import imread, imwrite
 import imageio
 import numpy as np
 import time
+import datetime
 
 import torch
 from torch.utils.data import Dataset
@@ -48,8 +49,8 @@ def lossFunction(yPredLocalList, yGtLocalList, yPredGlobalList, yGtGlobalList, k
 def lossFunctionLocal(yPredLocalList, yGtLocalList, k = 1): #TUM uses k = 1
     lossLocal = 0
     for batchIndex in range(yPredLocalList.shape[0]):
-        traTensorErr = yPredLocalList[batchIndex][0:3] - yPredLocalList[batchIndex][0:3]
-        rotTensorErr = yPredLocalList[batchIndex][3:7] - yPredLocalList[batchIndex][3:7]
+        traTensorErr = yPredLocalList[batchIndex][0:3] - yGtLocalList[batchIndex][0:3]
+        rotTensorErr = yPredLocalList[batchIndex][3:7] - yGtLocalList[batchIndex][3:7]
         #print(traTensorErr)
         #print(rotTensorErr)
         traTensor = torch.dot(traTensorErr, traTensorErr)
@@ -105,24 +106,24 @@ def datasetsListGet(paths):
 
 
 
-def trainModel(model, dataLoaderTrain, dataLoaderTest):
+def trainModel(model, dataLoaderTrain, dataLoaderTest, device):
     # learning rate decays every 60k iterations
     optimizer = optim.Adam(model.parameters(), lr=0.0001, betas=(0.9, 0.99), weight_decay=0.0004)  # Adjust the LR as needed
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=60000, gamma=0.5)
 
     numIterations = 150000
-    #print(len(dataLoaderTrain))
+    print(len(dataLoaderTrain))
     iterPerEpoch = len(dataLoaderTrain)
     numEpochs = numIterations // iterPerEpoch + 1  # Ensure we have enough epochs
-
+    print("num of epochs: ", numEpochs)
     model.train()  # Set the model to training mode
-    print('onias3')
     iteration = 0
     for epoch in range(numEpochs):
 
         train_loss = 0
         model.train()
         for images, poses in dataLoaderTrain:
+            poses = poses.to(device)
             if iteration >= numIterations:
                 break
             #images, poses = images.cuda(), poses.cuda()  # Move data to GPU if available
@@ -151,8 +152,9 @@ def trainModel(model, dataLoaderTrain, dataLoaderTest):
         model.eval()
         with torch.no_grad():
             for input, target in dataLoaderTest:
+                target = target.to(device)
                 output = model(input)
-                loss = lossFunction(output.flatten(), target.flatten())
+                loss = lossFunctionLocal(output, target)
                 val_loss += loss.item()
         val_loss /= len(dataLoaderTest.dataset)
         if iteration >= numIterations:
@@ -314,8 +316,7 @@ def main():
     FlowNetModel = models.__dict__[FlowNet_data["arch"]](FlowNet_data).to(device)
     FlowNetModel.to(device)
 
-    model2 = DvoAm_EncPlusTrack(device=device, batchNorm=False)
-    model2.to(device)
+    model2 = DvoAm_EncPlusTrack(device=device, batchNorm=False).to(device)
     #Capturing the layers we want from FlowNet!
     encodingLayers = ['conv1.0.weight', 'conv2.0.weight', \
                       'conv3.0.weight', 'conv3_1.0.weight', \
@@ -343,14 +344,17 @@ def main():
     print(new_state_dict.keys())
     model2.load_state_dict(new_state_dict)
     print('onias2')
-
+    print(datetime.datetime.now())
     if (isTrain):
         print("training")
-        trainModel(model2, train_loader, test_loader)
+        trainModel(model2, train_loader, test_loader, device)
+        model_path = 'output_model.pth'
+        torch.save(model2.state_dict(), model_path)
     else:
         print("testing")
+    print(datetime.datetime.now())
 
-
+#comecei a rodar as 16h33min
 
 if __name__ == "__main__":
     main()
