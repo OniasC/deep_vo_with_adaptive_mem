@@ -102,6 +102,29 @@ class DvoAm_EncTrackRefining(nn.Module):
             refining()
 
 
+'''
+para o frame K:
+---tracking---
+x_k = encoding(Frame_k, frame_{k-1})
+o_k, h_k = LSTM(x_k, h_{k-1})
+p_{k,k-1} = SE3(o_k)
+---refining---
+check if you need to update M array
+if yes, update with latest h_k
+
+M'_k = f(oA_{k-1}, o_{k-1}, M_k), I know f. Need to double check if o_{k-1} is correct or is a spelling mistake
+x'_k = g1(oA_{k-1},M'_K), g1 is the same as function f !!! I get it!
+
+tempTensor = stacked(x'_k,M'_K) #dim is now H x W x 2C
+xA_k = conv(tempTensor). paper says "2 conv layers of kernel size of 3 for fusion." So the dimensions are back to H x W x C.
+                         ^ but what is the stride and what is the padding of the conv? Also, the paper appendix says its only one conv layer that doesnt lower dimension...
+                         ^ I think i will first believe the paper, not the appendix.
+oA_k, hA_k = LSTM_A(xA_k, hA_{k-1})
+pA_k = SE3(oA_k)
+
+
+'''
+
         #transform a [4, 1024, 8, 10] tensor into a [4, 1024, 1, 8, 10]
         outEncoderExtraDim = out_encoder.unsqueeze(2) # adds a dimension at 3th dim.
         #print("new dimension: ", outEncoderExtraDim.size())
