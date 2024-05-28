@@ -62,27 +62,44 @@ class DvoAm_EncTrackRefining(nn.Module):
         # ^ WRONG!!! THIS IS FOR MEMORY - REFINING STAGE. For tracking phase, its only that one set of two frames.
 
         # esse output aqui eh qual formato? state + hidden?
-        newHiddenState = out_tracking.out_LstmTracking
+        newHiddenState = self.encodingPlusTracking.out_LstmTracking
+        newMemoryCandidate = (newHiddenState, out_tracking)
+        #print(newHiddenState)
+        isKeyFrame = []
+        refining = []
+        for iter in range(x.size(0)):
+            isKeyFrame.append(False)
+            refining.append(False)
 
-        isKeyFrame = False
-        # content of memory are the hidden states of key frames
-        lastHiddenState = self.memory[-1]
-        newHiddenState = self.memory[-1]
-
-        isKeyFrame = self.keyFrameCriteria(newHiddenState, lastHiddenState)
-
-        if isKeyFrame == True:
-            if (len(self.memory) == self.sizeMemory):
-                #just update the list,
-                for index in range(len(self.memory)-1):
-                    self.memory[index] = self.memory[index + 1]
-                self.memory[-1] = newHiddenState
-            else:
-                # size isnt max yet, so append to it
-                self.memory.append(newHiddenState)
+        if(len(self.memory) == 0):
+            for iter in range(len(isKeyFrame)):
+                isKeyFrame[iter] = True
+        else:
+            # content of memory are the (hidden states of key frames, pose)
+            lastMemory = self.memory[-1]
+            for i in range(len(isKeyFrame)):
+                lastMemSingleBatch = lastMemory[i].unsqueeze(0)  # Extract a single batch, maintain 4D shape
+                newMemSingleBatch = newMemoryCandidate[i].unsqueeze(0)  # Extract a single batch, maintain 4D shape
+                isKeyFrame[i] = self.keyFrameCriteria(newMemSingleBatch, lastMemSingleBatch)
 
         if (len(self.memory) == self.sizeMemory):
+            #just update the list,
+            for index in range(len(self.memory)-1):
+                self.memory[i][index] = self.memory[i][index + 1]
+            self.memory[i][-1] = newMemoryCandidate[i]
+        else:
+            # size isnt max yet, so append to it
+            self.memory.append(newMemoryCandidate)
+
+        for i in range(len(isKeyFrame)):
+            if isKeyFrame[i] == True:
+
+
+        # memoria esta construida
+        # memoria eh uma lista de tupla (pose, com newhiddenState)
+        if (len(self.memory) == self.sizeMemory):
             # entao posso seguir
+            refining()
 
 
         #transform a [4, 1024, 8, 10] tensor into a [4, 1024, 1, 8, 10]

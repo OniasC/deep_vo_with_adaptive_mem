@@ -152,8 +152,8 @@ class DvoAm_EncPlusTrack(nn.Module):
         #transform a [4, 1024, 8, 10] tensor into a [4, 1024, 1, 8, 10]
         outEncoderExtraDim = out_encoder.unsqueeze(2) # adds a dimension at 3th dim.
         #print("new dimension: ", outEncoderExtraDim.size())
-        out_LstmTracking = self.convLSTM(outEncoderExtraDim)
-        out_GapTracking = self.gap(out_LstmTracking)
+        self.out_LstmTracking = self.convLSTM(outEncoderExtraDim)
+        out_GapTracking = self.gap(self.out_LstmTracking)
         out_GapTracking = torch.squeeze(out_GapTracking, -1)
         out_GapTracking = torch.squeeze(out_GapTracking, -1)
         out_GapTracking = torch.squeeze(out_GapTracking, -1)
