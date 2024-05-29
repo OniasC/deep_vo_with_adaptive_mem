@@ -1,6 +1,3 @@
-import torch.nn as nn
-import torch
-
 import torch
 import torch.nn as nn
 
@@ -21,24 +18,45 @@ class ConvLSTMCell(nn.Module):
         elif activation == "relu":
             self.activation = torch.relu
 
-        self.Wi = nn.Conv2d(
-            in_channels=in_channels + out_channels, #we're doing conv of X and H_{k-1} together!
-            out_channels=4 * out_channels, # why 4?! read above!
+        self.Wxi = nn.Conv2d(
+            in_channels=in_channels, #we're doing conv of X and H_{k-1} together!
+            out_channels=out_channels, # why 4?! read above!
             kernel_size=kernel_size,
             padding=padding)
-        self.Wf = nn.Conv2d(
-            in_channels=in_channels + out_channels, #we're doing conv of X and H_{k-1} together!
-            out_channels=4 * out_channels, # why 4?! read above!
+        self.Wxf = nn.Conv2d(
+            in_channels=in_channels, #we're doing conv of X and H_{k-1} together!
+            out_channels=out_channels, # why 4?! read above!
             kernel_size=kernel_size,
             padding=padding)
-        self.Wo = nn.Conv2d(
-            in_channels=in_channels + out_channels, #we're doing conv of X and H_{k-1} together!
-            out_channels=4 * out_channels, # why 4?! read above!
+        self.Wxo = nn.Conv2d(
+            in_channels=in_channels, #we're doing conv of X and H_{k-1} together!
+            out_channels=out_channels, # why 4?! read above!
             kernel_size=kernel_size,
             padding=padding)
-        self.Wc = nn.Conv2d(
-            in_channels=in_channels + out_channels, #we're doing conv of X and H_{k-1} together!
-            out_channels=4 * out_channels, # why 4?! read above!
+        self.Wxc = nn.Conv2d(
+            in_channels=in_channels, #we're doing conv of X and H_{k-1} together!
+            out_channels=out_channels, # why 4?! read above!
+            kernel_size=kernel_size,
+            padding=padding)
+        
+        self.Whi = nn.Conv2d(
+            in_channels=in_channels, #we're doing conv of X and H_{k-1} together!
+            out_channels=out_channels, # why 4?! read above!
+            kernel_size=kernel_size,
+            padding=padding)
+        self.Whf = nn.Conv2d(
+            in_channels=in_channels, #we're doing conv of X and H_{k-1} together!
+            out_channels=out_channels, # why 4?! read above!
+            kernel_size=kernel_size,
+            padding=padding)
+        self.Who = nn.Conv2d(
+            in_channels=in_channels, #we're doing conv of X and H_{k-1} together!
+            out_channels=out_channels, # why 4?! read above!
+            kernel_size=kernel_size,
+            padding=padding)
+        self.Whc = nn.Conv2d(
+            in_channels=in_channels, #we're doing conv of X and H_{k-1} together!
+            out_channels=out_channels, # why 4?! read above!
             kernel_size=kernel_size,
             padding=padding)
 
@@ -52,32 +70,39 @@ class ConvLSTMCell(nn.Module):
         self.bc = nn.Parameter(torch.Tensor(out_channels, *frame_size))
         self.bo = nn.Parameter(torch.Tensor(out_channels, *frame_size))
 
+        # FALTA INICIALIZAR OS OUTROS parametros
+        # Initialize the parameters
+        nn.init.xavier_uniform_(self.Wxi.weight)
+        nn.init.xavier_uniform_(self.Wxf.weight)
+        nn.init.xavier_uniform_(self.Wxo.weight)
+        nn.init.xavier_uniform_(self.Wxc.weight)
+        nn.init.xavier_uniform_(self.Whi.weight)
+        nn.init.xavier_uniform_(self.Whf.weight)
+        nn.init.xavier_uniform_(self.Who.weight)
+        nn.init.xavier_uniform_(self.Whc.weight)
+        nn.init.constant_(self.W_ci, 0)
+        nn.init.constant_(self.W_cf, 0)
+        nn.init.constant_(self.W_co, 0)
+        nn.init.constant_(self.bi, 0)
+        nn.init.constant_(self.bf, 0)
+        nn.init.constant_(self.bc, 0)
+        nn.init.constant_(self.bo, 0)
+
 
     def forward(self, X, H_prev, C_prev):
 
-        # Idea adapted from https://github.com/ndrplz/ConvLSTM_pytorch
-        concatXandH = torch.cat([X, H_prev], dim=1)
+        # input gate
+        inputGate = torch.sigmoid(self.Wxi(X) + self.Whi(H_prev) + self.W_ci*C_prev + self.bi)
+        # forget gate
+        forgetGate = torch.sigmoid(self.Wxf(X) + self.Whf(H_prev)+ self.W_cf*C_prev + self.bf)
+        # C_t
+        C = forgetGate*C_prev + inputGate * self.activation(self.Wxc(X) + self.Whc(H_prev) + self.bc)
+        # output state
+        out = torch.sigmoid(self.Wxo(X) + self.Who(H_prev) + self.W_co*C + self.bo)
+        # hidden state
+        H = out * self.activation(C)
 
-        #calc input
-
-        #calc 
-        conv_output = self.conv(concatXandH)
-
-        # Idea adapted from https://github.com/ndrplz/ConvLSTM_pytorch
-        i_conv, f_conv, C_conv, o_conv = torch.chunk(conv_output, chunks=4, dim=1)
-
-        input_gate = torch.sigmoid(i_conv + self.W_ci * C_prev )
-        forget_gate = torch.sigmoid(f_conv + self.W_cf * C_prev )
-
-        # Current Cell output
-        C = forget_gate*C_prev + input_gate * self.activation(C_conv)
-
-        output_gate = torch.sigmoid(o_conv + self.W_co * C )
-
-        # Current Hidden State
-        H = output_gate * self.activation(C)
-
-        return H, C
+        return out, H, C
 
 
 class ConvLSTM(nn.Module):
@@ -116,11 +141,11 @@ class ConvLSTM(nn.Module):
         # Unroll over time steps
         for time_step in range(seq_len):
 
-            H, C = self.convLSTMcell(X[:,:,time_step], H, C)
+            out, H, C = self.convLSTMcell(X[:,:,time_step], H, C)
 
             output[:,:,time_step] = H
 
-        return output
+        return out, output
 
 class Seq2Seq(nn.Module):
 
@@ -223,7 +248,7 @@ class ConvLSTMCell2(nn.Module):
         i_t = torch.sigmoid(sum_all)
 
         return i_t
-
+'''
 # Example usage
 batch_size, input_channels, height, width = 4, 3, 64, 64
 hidden_channels = 16
@@ -239,4 +264,4 @@ c_t_1 = torch.randn(batch_size, hidden_channels, height, width)
 
 # Forward pass
 i_t = conv_lstm_cell(x_t, H_t_1, c_t_1)
-print(i_t.shape)  # Should output: torch.Size([4, 16, 64, 64])
+print(i_t.shape)  # Should output: torch.Size([4, 16, 64, 64])'''

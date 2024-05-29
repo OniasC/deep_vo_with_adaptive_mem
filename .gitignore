@@ -1,5 +1,6 @@
 */_pycache__
 *.pyc
 datasets/*
-flownets_EPE1.951.pth
+flownets_EPE1.951.pth*
 *.pkl
+.vscode/*

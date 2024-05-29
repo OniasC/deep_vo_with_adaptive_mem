@@ -9,7 +9,7 @@ import numpy as np
 
 #from convlstm import ConvLSTM
 #from convlstm2 import ConvLSTM
-from convlstm_mine import ConvLSTM
+from convlstm_mine import ConvLSTM, ConvLSTMCell
 
 def conv(batchNorm, in_planes, out_planes, kernel_size=3, stride=1):
     if batchNorm:
@@ -88,7 +88,7 @@ class DvoAm_Full(nn.Module):
                 constant_(m.bias, 0)
 
         # Tracking
-        self.localConvLSTM = ConvLSTM(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), activation="tanh", frame_size=(8,10),device=device) # what do these inputs mean??
+        self.localConvLSTM = ConvLSTMCell(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), frame_size=(8,10), activation="tanh") # what do these inputs mean??
 
         self.localGap = nn.AvgPool3d((1,8,10))
         # (1,1,1024)
@@ -114,7 +114,7 @@ class DvoAm_Full(nn.Module):
         #output do encodingPlusTracking eh [4,7] 4 batches
 
         # convlstm2.py
-        self.convLSTM = ConvLSTM(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), activation="tanh", frame_size=(8,10),device=device) # what do these inputs mean??
+        self.convLSTM = ConvLSTMCell(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), frame_size=(8,10), activation="tanh") # what do these inputs mean??
 
         self.refConv1 = conv(self.batchNorm, 6, 64, kernel_size=3, stride=1)
         self.refConv2 = conv(self.batchNorm, 6, 64, kernel_size=3, stride=1)
@@ -172,35 +172,28 @@ class DvoAm_Full(nn.Module):
         #tracking
 
         #transform a [4, 1024, 8, 10] tensor into a [4, 1024, 1, 8, 10]
-        outEncoderExtraDim = self.imgFlow.unsqueeze(2) # adds a dimension at 3th dim.
-        localLstmTrackingExtraDim = self.localConvLSTM(outEncoderExtraDim)
-        self.localLstm = torch.squeeze(localLstmTrackingExtraDim, 2)
+        #TODO: MELHORAR LOCALCONVLSTM PARA GUARDAR ESTADO C INTERNAMENTE. ESTADO H NAO PRECISA..
+        #TODO: TEM QUE INICIALIZAR TBM A MATRIX C COM ALGUMA COISA..
+        self.outLocalLstm, self.hiddenLocalLstm = self.localConvLSTM(self.imgFlow, self.hiddenLocalLstm)
         #adjust the dimension before passing to the
-        localPose = self.se3(self.localLstm, self.localGap, self.localFc)
+        localPose = self.se3(self.outLocalLstm, self.localGap, self.localFc)
 
         #refining
 
-
-
         # esse output aqui eh qual formato? state + hidden?
-        newHiddenState = self.localLstm
+        newHiddenState = self.hiddenLocalLstm
         newMemoryCandidate = (newHiddenState, localPose)
         #print(newHiddenState)
 
         self.memory = self.memoryUpdate(self.memory, newMemoryCandidate, x.size(0))
 
-        #self.outA = torch.empty( self.localLstm.shape).to(self.device)
-        M_dash = self.f1(self.outA, self.localLstm, self.localLstm.shape) #outPrev or localPose??
+        M_dash = self.f1(self.outA, self.hiddenLocalLstm, self.hiddenLocalLstm.shape) #outPrev or localPose??
         x_dash = self.guidance2(self.encodingPlusTracking.imgFlow, self.outA)
         tempTensor = torch.cat((x_dash, M_dash), dim=1) # whatever is the dim of number of channels.
         xA = self.conv2(self.conv1(tempTensor))
-        xAExtraDim = xA.unsqueeze(2) # adds a dimension at 3th dim.
-        self.outA = self.convLSTM(xAExtraDim)
-        out_Gap = self.gap(self.outA)
-        out_Gap1 = torch.squeeze(out_Gap, -1)
-        out_Gap2 = torch.squeeze(out_Gap1, -1)
-        out_Gap3 = torch.squeeze(out_Gap2, -1)
-        absPose = self.fc(out_Gap3)
+        self.outA, self.hiddenA = self.convLSTM(xA, self.hiddenA)
+        absPose = self.se3(self.outA, self.gap, self.fc)
+
         return absPose, localPose
 
     def encoding(self, input):
@@ -281,17 +274,25 @@ class DvoAm_Full(nn.Module):
     def betaGet(self, outPrev, memory):
         '''
         beta_j is the normalized weight between channel j of outPrev[j] and self.memory[i][j]. has size C
+        beta needs to have the following dimensions:
+                Batches x N x C x H x W 
+                Batches: as anything else of this model
+                N: because each 'm' in memory will have its own beta_i
+                C: because we will get the dot product og beta_j with m_j, where j goes from 1 to C
+                H,W : dimensions of encoded optical flow
         '''
         # TODO: what should be the shape here??
-        totalCosSim = torch.empty(outPrev[:])
-        beta = torch.empty(outPrev.shape) # size of numBatches, 1024, H, W
+        totalCosSim = torch.empty(F.cosine_similarity(outPrev[:,0,:,:], memory[:,0,:,:]).shape).to(self.device)
+        beta = torch.empty(totalCosSim.shape) # size of numBatches, 1024, H, W
         for j in range(memory.shape[1]):
             #for each channel:
-            for k in range(len(outPrev.shape[1])):
-                beta_jDen = F.cosine_similarity(outPrev[:][k][:][:], memory[j])
+            for k in range(outPrev.shape[1]):
+                #print(outPrev[:,k,:,:])
+                #print(memory[:,j,:,:])
+                beta_jDen = F.cosine_similarity(outPrev[:,k,:,:], memory[:,j,:,:])
                 totalCosSim += beta_jDen
             # j goes from 0 to C-1 (1023) in our case
-            beta[:][j][:][:] = F.cosine_similarity(outPrev[:][j][:][:], memory[:][j][:][:])/totalCosSim
+            beta[:][j] = F.cosine_similarity(outPrev[:,j,:,:], memory[:,j,:,:])/totalCosSim
         return beta
 
     def guidance2(self, outEncoding, outAbsPrev):
@@ -304,7 +305,7 @@ class DvoAm_Full(nn.Module):
         '''
         combination = torch.empty(beta.shape)
         for c in range(beta.shape[1]):
-            combination[:][c][:][:] = beta[:][c][:][:]*memory[:][c][:][:]
+            combination[:,c,:,:] = beta[:,c,:,:]*memory[:,c,:,:]
         return combination
 
     def keyFrameCriteria(self, newHiddenState, lastHiddenState):

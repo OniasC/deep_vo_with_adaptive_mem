@@ -194,6 +194,7 @@ def main():
     trainPaths = ['datasets/rgbd_dataset_freiburg1_desk/',\
                   'datasets/rgbd_dataset_freiburg2_xyz/']
     testPaths = ['datasets/rgbd_dataset_freiburg2_desk/']
+    opticalFlowModelFile = 'flownets_EPE1.951.pth'
 
     datasetsTrain, datasetsTest = datasetsGet(trainPaths= trainPaths,
                                               testPaths=testPaths)
@@ -205,10 +206,11 @@ def main():
     tumDatasetTest = CustomTUMDataset(datasetsTest,device)
     train_loader = torch.utils.data.DataLoader(tumDatasetTrain, batch_size=4, shuffle=True)
     test_loader  = torch.utils.data.DataLoader(tumDatasetTest, batch_size=4, shuffle=True)
-    #print(tumDataset.__getitem__(3))
-
-
-    FlowNet_data = torch.load('flownets_EPE1.951.pth',map_location=torch.device('cpu'))
+    
+    if (os.path.isfile(opticalFlowModelFile) == False):
+        opticalFlowModelFile = opticalFlowModelFile + '.tar'
+    
+    FlowNet_data = torch.load(opticalFlowModelFile, map_location=torch.device(device))
     print("=> using pre-trained model '{}'".format(FlowNet_data["arch"]))
     FlowNetModel = models.__dict__[FlowNet_data["arch"]](FlowNet_data).to(device)
     FlowNetModel.to(device)
