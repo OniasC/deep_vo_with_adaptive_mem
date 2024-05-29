@@ -2,16 +2,11 @@ import argparse
 from path import Path
 import os
 from tqdm import tqdm
-import pickle
-import torchvision.transforms as transforms
-from imageio import imread, imwrite
-import imageio
 import numpy as np
 import time
 import datetime
 
 import torch
-from torch.utils.data import Dataset
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
@@ -20,10 +15,10 @@ from torch.nn.init import kaiming_normal_, constant_
 import torch.optim as optim
 
 # local libraries
-from util import flow2rgb, AverageMeter, save_checkpoint
+from util import flow2rgb, AverageMeter, save_checkpoint, datasetsGet, CustomTUMDataset
 import util
 import models
-import flow_transforms
+
 from convlstm import ConvLSTM
 from deepVO_wMemory import DvoAm_EncPlusTrack, DvoAm_Encoder
 from deepVO_wRefining import DvoAm_EncTrackRefining
@@ -60,52 +55,6 @@ def lossFunctionLocal(yPredLocalList, yGtLocalList, k = 1): #TUM uses k = 1
     loss = lossLocal / yPredLocalList.shape[0] # average the loss of all batches
     return loss
 
-def averagePoseGet(pose1, pose2, distance1, distance2):
-    newPose = []
-    for i in range(len(pose1)):
-        # this is a weighted average between the two closest poses
-        newPose.append((pose1[i]*distance2 + pose2[i]*distance1)/(distance1 + distance2))
-        # this is just the closes timestamp: pose1
-        #newPose.append(pose1[i])
-    return tuple(newPose)
-
-def datasetsListGet(paths):
-    '''
-    need to capture the images and the ground truth
-    input: tuple(frame[k-1], frame[k])
-    output: tuple(7d pose - xyz + 4 quaternions)'''
-    datasetIO = []
-    for path in paths:
-        gtDict = util.read_gt_file_to_dict(path + 'groundtruth.txt')
-        gtDictSorted = sorted(gtDict)
-        rgbDict = util.read_rgb_file_to_dict(path + 'rgb.txt')
-        rgbDictSorted = sorted(rgbDict)
-        for i in range(len(gtDictSorted)-1):
-            if(gtDictSorted[i+1] < gtDictSorted[i]):
-                # if condition matched update the out
-                print('error in order of gt')
-        for i in range(len(rgbDictSorted)-1):
-            if(rgbDictSorted[i+1] < rgbDictSorted[i]):
-                # if condition matched update the out
-                print('error in order of rgb')
-
-        # gt has more elements than rgb, so we get the closest elements of rgb that are inside gt
-        # Matching GT to RGB timestamps - we need to "fake" matching keypoints
-
-        for i in range(1,len(rgbDictSorted)):
-            frameCurrTimeStamp = rgbDictSorted[i]
-            framePrevTimeStamp = rgbDictSorted[i-1]
-            gtSortedRelativeTS = sorted(gtDictSorted, key=lambda x: abs(x - frameCurrTimeStamp))
-            closest1, closest2 = gtSortedRelativeTS[:2]
-            distance1 = abs(closest1 - frameCurrTimeStamp)
-            distance2 = abs(closest2 - frameCurrTimeStamp)
-            gtPose = averagePoseGet(gtDict[closest1], gtDict[closest2], distance1, distance2)
-            input = (path + rgbDict[framePrevTimeStamp], path + rgbDict[frameCurrTimeStamp])
-            datasetIO.append((input,gtPose))
-        print('\n')
-    return datasetIO
-
-
 
 def trainModel(model, dataLoaderTrain, dataLoaderTest, device):
     # learning rate decays every 60k iterations
@@ -136,8 +85,9 @@ def trainModel(model, dataLoaderTrain, dataLoaderTest, device):
             #print("outputs: ", outputs)
             #print("gt: ", poses)
 
-            loss = lossFunctionLocal(outputs, poses)
-            loss.backward()  # Backpropagation
+            individualLoss = lossFunctionLocal(outputs, poses)
+            batchLoss = individualLoss.mean()
+            batchLoss.backward()  # Backpropagation
             optimizer.step()  # Optimize the parameters
             train_loss += loss.item()
             if iteration % 100 == 0:
@@ -233,61 +183,6 @@ def train_v2(train_loader, model, optimizer, train_writer, device):
     return losses.avg, flow2_EPEs.avg
 
 
-class CustomTUMDataset(Dataset):
-    ''' datasetList is a list of tuples:
-        The first element is a tuple of consecutive images
-        The second element is the pose of the images.
-    '''
-    def __init__(self, data_list, device, transform=None):
-        self.data_list = data_list
-        self.transform = transform
-        self.device    = device
-
-    def __len__(self):
-        return len(self.data_list)
-
-    def __getitem__(self, idx):
-        input_transform = transforms.Compose(
-            [
-                flow_transforms.ArrayToTensor(),
-                transforms.Normalize(mean=[0, 0, 0], std=[255, 255, 255]),
-                transforms.Normalize(mean=[0.411, 0.432, 0.45], std=[1, 1, 1]),
-            ]
-        )
-
-        item = self.data_list[idx]
-        imagesPaths = item[0]
-        pose = item[1]
-        image0 = input_transform(imageio.v2.imread(imagesPaths[0])).to(self.device)
-        image1 = input_transform(imageio.v2.imread(imagesPaths[1])).to(self.device)
-        image = torch.cat([image0, image1])#.unsqueeze(0)
-
-        pose = torch.tensor(pose, dtype=torch.float32)
-        image.to(self.device)
-        pose.to(self.device)
-        return image, pose
-
-def datasetsGet(trainPaths, testPaths):
-    datasetsTrain = []
-    if (os.path.isfile('trainDatasets.pkl') == False):
-        datasetsTrain = datasetsListGet(trainPaths)
-        with open('trainDatasets.pkl', 'wb') as file:
-            pickle.dump(datasetsTrain, file)
-    else:
-        print("loading train pickle file")
-        with open('trainDatasets.pkl', 'rb') as file:
-            datasetsTrain = pickle.load(file)
-    datasetsTest = []
-    if (os.path.isfile('testDatasets.pkl') == False):
-        datasetsTest = datasetsListGet(testPaths)
-        with open('testDatasets.pkl', 'wb') as file:
-            pickle.dump(datasetsTrain, file)
-    else:
-        print("loading test pickle file")
-        with open('testDatasets.pkl', 'rb') as file:
-            datasetsTest = pickle.load(file)
-
-    return datasetsTrain, datasetsTest
 
 def main():
 

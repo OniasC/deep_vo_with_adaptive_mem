@@ -142,7 +142,7 @@ class DvoAm_EncPlusTrack(nn.Module):
                 constant_(m.bias, 0)
 
     def forward(self, x):
-        out_encoder = self.encoding(x)
+        self.out_encoder = self.encoding(x)
         #print("up to here, fine!")
         #print("encoder_out", out_encoder.shape)
         # before I enter the next layer, i need to get the size of the the "tail" for the convlstm. and add it to the tensor.
@@ -150,12 +150,22 @@ class DvoAm_EncPlusTrack(nn.Module):
         # ^ WRONG!!! THIS IS FOR MEMORY - REFINING STAGE. For tracking phase, its only that one set of two frames.
 
         #transform a [4, 1024, 8, 10] tensor into a [4, 1024, 1, 8, 10]
-        outEncoderExtraDim = out_encoder.unsqueeze(2) # adds a dimension at 3th dim.
+        outEncoderExtraDim = self.out_encoder.unsqueeze(2) # adds a dimension at 3th dim.
         #print("new dimension: ", outEncoderExtraDim.size())
+
         self.out_LstmTracking = self.convLSTM(outEncoderExtraDim)
+        #print("new dimension after lstm: ", self.out_LstmTracking.size())
+
+        self.out_LstmTracking = torch.squeeze(self.out_LstmTracking, 2)
+        #print("new dimension: ", self.out_LstmTracking.size())
+
         out_GapTracking = self.gap(self.out_LstmTracking)
+        #print("new dimension after gap: ", out_GapTracking.size())
+
         out_GapTracking = torch.squeeze(out_GapTracking, -1)
+        #print("new dimension after gap: ", out_GapTracking.size())
+
         out_GapTracking = torch.squeeze(out_GapTracking, -1)
-        out_GapTracking = torch.squeeze(out_GapTracking, -1)
+        #print("new dimension after gap: ", out_GapTracking.size())
         out_tracking = self.fc(out_GapTracking)
         return out_tracking
