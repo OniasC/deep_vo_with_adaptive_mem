@@ -22,6 +22,7 @@ import models
 from convlstm import ConvLSTM
 from deepVO_wMemory import DvoAm_EncPlusTrack, DvoAm_Encoder
 from deepVO_wRefining import DvoAm_EncTrackRefining
+from deep_vo_full import DvoAm_Full
 
 def lossFunction(yPredLocalList, yGtLocalList, yPredGlobalList, yGtGlobalList, k = 1): #TUM uses k = 1
     lossLocal = 0
@@ -213,7 +214,7 @@ def main():
     FlowNetModel.to(device)
 
     #model2 = DvoAm_EncPlusTrack(device=device, batchNorm=False).to(device)
-    model2 = DvoAm_EncTrackRefining(device=device, batchNorm=False).to(device)
+    model2 = DvoAm_Full(device=device, batchNorm=False).to(device)
 
     #Capturing the layers we want from FlowNet!
     encodingLayers = ['conv1.0.weight', 'conv2.0.weight', \
