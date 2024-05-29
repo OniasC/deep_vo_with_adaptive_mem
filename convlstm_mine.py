@@ -21,22 +21,22 @@ class ConvLSTMCell(nn.Module):
         elif activation == "relu":
             self.activation = torch.relu
 
-        self.conv = nn.Conv2d(
+        self.Wi = nn.Conv2d(
             in_channels=in_channels + out_channels, #we're doing conv of X and H_{k-1} together!
             out_channels=4 * out_channels, # why 4?! read above!
             kernel_size=kernel_size,
             padding=padding)
-        self.conv = nn.Conv2d(
+        self.Wf = nn.Conv2d(
             in_channels=in_channels + out_channels, #we're doing conv of X and H_{k-1} together!
             out_channels=4 * out_channels, # why 4?! read above!
             kernel_size=kernel_size,
             padding=padding)
-        self.conv = nn.Conv2d(
+        self.Wo = nn.Conv2d(
             in_channels=in_channels + out_channels, #we're doing conv of X and H_{k-1} together!
             out_channels=4 * out_channels, # why 4?! read above!
             kernel_size=kernel_size,
             padding=padding)
-        self.conv = nn.Conv2d(
+        self.Wc = nn.Conv2d(
             in_channels=in_channels + out_channels, #we're doing conv of X and H_{k-1} together!
             out_channels=4 * out_channels, # why 4?! read above!
             kernel_size=kernel_size,
@@ -47,10 +47,20 @@ class ConvLSTMCell(nn.Module):
         self.W_co = nn.Parameter(torch.Tensor(out_channels, *frame_size))
         self.W_cf = nn.Parameter(torch.Tensor(out_channels, *frame_size))
 
+        self.bi = nn.Parameter(torch.Tensor(out_channels, *frame_size))
+        self.bf = nn.Parameter(torch.Tensor(out_channels, *frame_size))
+        self.bc = nn.Parameter(torch.Tensor(out_channels, *frame_size))
+        self.bo = nn.Parameter(torch.Tensor(out_channels, *frame_size))
+
+
     def forward(self, X, H_prev, C_prev):
 
         # Idea adapted from https://github.com/ndrplz/ConvLSTM_pytorch
         concatXandH = torch.cat([X, H_prev], dim=1)
+
+        #calc input
+
+        #calc 
         conv_output = self.conv(concatXandH)
 
         # Idea adapted from https://github.com/ndrplz/ConvLSTM_pytorch
