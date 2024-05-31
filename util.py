@@ -8,6 +8,7 @@ import torchvision.transforms as transforms
 import flow_transforms
 from imageio import imread, imwrite
 import imageio
+from scipy.spatial.transform import Rotation as R
 
 def save_checkpoint(state, is_best, save_path, filename="checkpoint.pth.tar"):
     torch.save(state, os.path.join(save_path, filename))
@@ -55,8 +56,12 @@ def flow2rgb(flow_map, max_value):
     return rgb_map.clip(0, 1)
 
 def read_gt_file_to_dict(file_path):
+    '''
+    groundtruth is a tuple of absolute pose and relative pose (1,12) = (1,6+6)
+    '''
     result_dict = {}
 
+    prevValues = []
     with open(file_path, 'r') as file:
         for line in file:
             # Skip comments and empty lines
@@ -67,8 +72,19 @@ def read_gt_file_to_dict(file_path):
             parts = line.strip().split()
             if len(parts) == 8:
                 timestamp = parts[0]
-                values = tuple(map(float, parts[1:]))  # Convert the rest to float and store in a tuple
-                result_dict[float(timestamp)] = values
+                valuesList = list(map(float, parts[1:])) # Convert the rest to float and store in a list
+                values = valuesList[:3]
+                angs = R.from_quat(valuesList[3:7]).as_euler('xyz', degrees=True)
+                for ang in angs:
+                    values.append(ang)
+                if len(prevValues) == 0:
+                    # dont add at first timestamp
+                    prevValues = values
+                else:
+                    diffVal = []
+                    for i in range(len(values)):
+                        diffVal.append(values[i]-prevValues[i])
+                    result_dict[float(timestamp)] = tuple(values + diffVal)
 
     return result_dict
 

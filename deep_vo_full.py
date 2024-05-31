@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.nn.init import kaiming_normal_, constant_
 
-from scipy.spatial.transform import Rotation as R
+
 import numpy as np
 
 #from convlstm import ConvLSTM
@@ -45,6 +45,16 @@ class DvoAm_Full(nn.Module):
         super(DvoAm_Full, self).__init__()
 
         self.device = device
+
+        self.spatialAtten = False
+        self.temporalAtten = True
+
+        self.sizeMemory = 11
+
+        self.memory = [] #memory should be a tensor of dimension (batch, N). Should it??
+
+        self.thetaRot = 0.01 # unit: rad
+        self.thetaTra = 0.01 # unit: m
 
         # Encoding
         self.batchNorm = batchNorm
@@ -88,12 +98,11 @@ class DvoAm_Full(nn.Module):
                 constant_(m.bias, 0)
 
         # Tracking
-        self.localConvLSTM = ConvLSTMCell(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), frame_size=(8,10), activation="tanh") # what do these inputs mean??
-
+        self.hiddenLocalLstm = torch.zeros((4,1024,8,10), device=self.device)
+        self.localConvLSTM = ConvLSTMCell(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), frame_size=(8,10), batch_size=4, device=device, activation="tanh") # what do these inputs mean??
         self.localGap = nn.AvgPool3d((1,8,10))
         # (1,1,1024)
-        self.localFc = nn.Linear(in_features=1024,out_features=7) # should this be 7 because 3 position + 4 quaternions? 6 or 7??
-        # a saida eh 7
+        self.localFc = nn.Linear(in_features=1024,out_features=6) # 3 position + 3 angles
 
         #TODO: review these initializations
         for m in self.modules():
@@ -105,32 +114,24 @@ class DvoAm_Full(nn.Module):
                 constant_(m.weight, 1)
                 constant_(m.bias, 0)
 
-
-
         # entrada do tensor das duas imagens H x W x 6 (2 rgb's)
 
         # para entrada de 640 x 480 x 6, a saida eh de 10 x 8 x 1024
         # shape of tensor: [4, 1024, 8, 10]. 4 is the batch
-        #output do encodingPlusTracking eh [4,7] 4 batches
+        #output do encodingPlusTracking eh [4,6] 4 batches
 
         # convlstm2.py
-        self.convLSTM = ConvLSTMCell(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), frame_size=(8,10), activation="tanh") # what do these inputs mean??
+        self.hiddenA = torch.zeros((4,1024,8,10), device=self.device)
+        self.convLSTM = ConvLSTMCell(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), frame_size=(8,10), batch_size=4, device=device, activation="tanh") # what do these inputs mean??
 
-        self.refConv1 = conv(self.batchNorm, 6, 64, kernel_size=3, stride=1)
-        self.refConv2 = conv(self.batchNorm, 6, 64, kernel_size=3, stride=1)
+        self.refConv1 = conv(self.batchNorm, in_planes=2048, out_planes=1024, kernel_size=3, stride=1)
+        self.refConv2 = conv(self.batchNorm, 1024, 1024, kernel_size=3, stride=1)
 
         # convnLTSM nao muda tamanho do tensor.. ou muda??
         self.gap = nn.AvgPool3d((1,8,10))
         # (1,1,1024)
-        self.fc = nn.Linear(in_features=1024,out_features=7) # should this be 7 because 3 position + 4 quaternions? 6 or 7??
-        # a saida eh 7
-
-        self.sizeMemory = 11
-
-        self.memory = [] #memory should be a tensor of dimension (batch, N). Should it??
-
-        self.thetaRot = 0.01 # unit: rad
-        self.thetaTra = 0.01 # unit: m
+        self.fc = nn.Linear(in_features=1024,out_features=6) # 3 position + 3 angles
+        # a saida eh 6
 
         self.outA = torch.empty(4,1024,8,10).to(device)
 
@@ -172,25 +173,23 @@ class DvoAm_Full(nn.Module):
         #tracking
 
         #transform a [4, 1024, 8, 10] tensor into a [4, 1024, 1, 8, 10]
-        #TODO: MELHORAR LOCALCONVLSTM PARA GUARDAR ESTADO C INTERNAMENTE. ESTADO H NAO PRECISA..
-        #TODO: TEM QUE INICIALIZAR TBM A MATRIX C COM ALGUMA COISA..
         self.outLocalLstm, self.hiddenLocalLstm = self.localConvLSTM(self.imgFlow, self.hiddenLocalLstm)
-        #adjust the dimension before passing to the
         localPose = self.se3(self.outLocalLstm, self.localGap, self.localFc)
+        #print("local pose: ", localPose)
 
         #refining
 
-        # esse output aqui eh qual formato? state + hidden?
-        newHiddenState = self.hiddenLocalLstm
-        newMemoryCandidate = (newHiddenState, localPose)
+        newMemoryCandidate = (self.hiddenLocalLstm, localPose)
         #print(newHiddenState)
 
         self.memory = self.memoryUpdate(self.memory, newMemoryCandidate, x.size(0))
 
-        M_dash = self.f1(self.outA, self.hiddenLocalLstm, self.hiddenLocalLstm.shape) #outPrev or localPose??
-        x_dash = self.guidance2(self.encodingPlusTracking.imgFlow, self.outA)
+        M_dash = self.guideMemory(self.outA, self.hiddenLocalLstm, self.hiddenLocalLstm.shape) #outPrev or localPose??
+        if (len(self.memory) == 0):
+            self.outA = self.outLocalLstm
+        x_dash = self.guideEncoding(self.imgFlow, self.outA)
         tempTensor = torch.cat((x_dash, M_dash), dim=1) # whatever is the dim of number of channels.
-        xA = self.conv2(self.conv1(tempTensor))
+        xA = self.refConv2(self.refConv1(tempTensor))
         self.outA, self.hiddenA = self.convLSTM(xA, self.hiddenA)
         absPose = self.se3(self.outA, self.gap, self.fc)
 
@@ -243,7 +242,6 @@ class DvoAm_Full(nn.Module):
                 newMemSingleBatch = newMemoryCandidate[i].unsqueeze(0)  # Extract a single batch, maintain 4D shape
                 isKeyFramePerBatch[i] = self.keyFrameCriteria(newMemSingleBatch, lastMemSingleBatch)
 
-
         if (len(self.memory) == self.sizeMemory):
             #just update the list,
             for index in range(len(self.memory)-1):
@@ -255,47 +253,54 @@ class DvoAm_Full(nn.Module):
         newMemory = self.memory
         return newMemory
 
-    def f1(self, outAbsPrev, outPrev, M_shape):
+    def guideMemory(self, outAbsPrev, outPrev, M_shape):
         '''
         M_dash = SUM(i: 1 to N)(alfa_i * m_dash_i)
         '''
-        M_dash = torch.empty(M_shape)
+        M_dash = torch.empty(M_shape).to(self.device)
         totalCosSim = torch.empty((M_shape[0],M_shape[2],M_shape[3])).to(self.device)
-        for i in range(len(self.memory)):
-            alfa_iNum = torch.exp(F.cosine_similarity(outAbsPrev, self.memory[i][0]))
+        for memory in self.memory:
+            alfa_iNum = torch.exp(F.cosine_similarity(outAbsPrev, memory[0]))
             totalCosSim += alfa_iNum
         for i in range(len(self.memory)):
             alfa_i = torch.exp(F.cosine_similarity(outAbsPrev, self.memory[i][0]))/totalCosSim
 
-            beta = self.betaGet(outPrev, self.memory[i][0])
-            M_dash += alfa_i * self.comb(beta, self.memory[i][0])
+            if (self.spatialAtten == True):
+                beta = self.beta_iGet(outPrev, self.memory[i][0]) #NOT USING BETA FOR NOW..
+                M_dash += alfa_i * self.comb(beta, self.memory[i][0])
+            else:
+                alfa_i = alfa_i.unsqueeze_(1)
+                alfa_i = alfa_i.expand(-1,1024,-1,-1)
+                M_dash += alfa_i * self.memory[i][0]
         return M_dash
 
-    def betaGet(self, outPrev, memory):
+    def beta_iGet(self, outPrev, memory):
         '''
         beta_j is the normalized weight between channel j of outPrev[j] and self.memory[i][j]. has size C
         beta needs to have the following dimensions:
-                Batches x N x C x H x W 
+                Batches x C x ??
                 Batches: as anything else of this model
-                N: because each 'm' in memory will have its own beta_i
                 C: because we will get the dot product og beta_j with m_j, where j goes from 1 to C
-                H,W : dimensions of encoded optical flow
+                ?? : what is the dimension of the cosine similarity
+        beta calculation takes too long! will move to not have spatial atenuation (at least for now)
         '''
         # TODO: what should be the shape here??
-        totalCosSim = torch.empty(F.cosine_similarity(outPrev[:,0,:,:], memory[:,0,:,:]).shape).to(self.device)
-        beta = torch.empty(totalCosSim.shape) # size of numBatches, 1024, H, W
+        totalCosSim = torch.empty(4, 10).to(self.device) #total cossine similarity for a single channel
+        beta = torch.empty(4, 1024, 10).to(self.device) # size of numBatches, 1024, H, W
         for j in range(memory.shape[1]):
             #for each channel:
             for k in range(outPrev.shape[1]):
-                #print(outPrev[:,k,:,:])
-                #print(memory[:,j,:,:])
-                beta_jDen = F.cosine_similarity(outPrev[:,k,:,:], memory[:,j,:,:])
+                #print("outPrev ", outPrev[:,k,:,:])
+                #print("memory ", memory[:,j,:,:])
+                #print("cosine: ", torch.exp(F.cosine_similarity(outPrev[:,k,:,:], memory[:,j,:,:])))
+                beta_jDen = torch.exp(F.cosine_similarity(outPrev[:,k,:,:], memory[:,j,:,:]))
                 totalCosSim += beta_jDen
             # j goes from 0 to C-1 (1023) in our case
-            beta[:][j] = F.cosine_similarity(outPrev[:,j,:,:], memory[:,j,:,:])/totalCosSim
+            beta[:,j,:] = torch.exp(F.cosine_similarity(outPrev[:,j,:,:], memory[:,j,:,:]))/totalCosSim
+            print(j)
         return beta
 
-    def guidance2(self, outEncoding, outAbsPrev):
+    def guideEncoding(self, outEncoding, outAbsPrev):
         x_dash = outEncoding
         return x_dash
 
@@ -313,8 +318,9 @@ class DvoAm_Full(nn.Module):
         lastPose = lastHiddenState[1]
 
         isRotKey = False
-        newAngle = R.from_quat(newPose[3:7]).as_euler('xyz', degrees=True)
-        prevAngle = R.from_quat(lastPose[3:7]).as_euler('xyz', degrees=True)
+        newAngle = newPose[3:6]
+        prevAngle = lastPose[3:6]
+
         rotDiff = newAngle - prevAngle
         rotTensor = torch.dot(rotDiff, rotDiff)
         if (rotTensor > self.thetaRot):

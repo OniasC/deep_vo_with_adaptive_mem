@@ -24,36 +24,25 @@ from deepVO_wMemory import DvoAm_EncPlusTrack, DvoAm_Encoder
 from deepVO_wRefining import DvoAm_EncTrackRefining
 from deep_vo_full import DvoAm_Full
 
-def lossFunction(yPredLocalList, yGtLocalList, yPredGlobalList, yGtGlobalList, k = 1): #TUM uses k = 1
-    lossLocal = 0
-    for i in range(len(yPredGlobalList)):
-        yPredTrans = np.array(yPredLocalList[i][0:2], dtype='float32') # x,y,z
-        yPredRot = np.array(yPredLocalList[i][3:6], dtype='float32') # 4 angles (quaternion)
-        yGtTrans = np.array(yGtLocalList[i][0:2], dtype='float32') # x,y,z
-        yGtRot = np.array(yGtLocalList[i][3:6], dtype='float32') # 4 angles (quaternion)
-        lossLocal += np.inner(yPredTrans - yGtTrans) + k*np.inner(yPredRot - yGtRot)
-    lossGlobal = 0
-    for i in range(len(yPredGlobalList)):
-        yPredTrans = np.array(yPredGlobalList[i][0:2], dtype='float32') # x,y,z
-        yPredRot = np.array(yPredGlobalList[i][3:6], dtype='float32') # 4 angles (quaternion)
-        yGtTrans = np.array(yGtGlobalList[i][0:2], dtype='float32') # x,y,z
-        yGtRot = np.array(yGtGlobalList[i][3:6], dtype='float32') # 4 angles (quaternion)
-        lossGlobal += np.inner(yPredTrans - yGtTrans) + k*np.inner(yPredRot - yGtRot)
-    loss = lossLocal +  lossGlobal
-    return loss
 
+def lossFunction(absPredList, localPredList, gt, onlyAbs = False, k = 1): #TUM uses k = 1
+    lossPerBatch = []
+    for batchIndex in range(absPredList.shape[0]):
+        absPred   = absPredList[batchIndex]
+        localPred = localPredList[batchIndex]
+        absGt   = gt[batchIndex][0:6]
+        localGt   = gt[batchIndex][6:-1]
 
-def lossFunctionLocal(yPredLocalList, yGtLocalList, k = 1): #TUM uses k = 1
-    lossLocal = 0
-    for batchIndex in range(yPredLocalList.shape[0]):
-        traTensorErr = yPredLocalList[batchIndex][0:3] - yGtLocalList[batchIndex][0:3]
-        rotTensorErr = yPredLocalList[batchIndex][3:7] - yGtLocalList[batchIndex][3:7]
-        #print(traTensorErr)
-        #print(rotTensorErr)
-        traTensor = torch.dot(traTensorErr, traTensorErr)
-        rotTensor = torch.dot(rotTensorErr, rotTensorErr)
-        lossLocal += traTensor + k*rotTensor
-    loss = lossLocal / yPredLocalList.shape[0] # average the loss of all batches
+        localTraErr = localPred[0:3] - localGt[0:3]
+        localRotErr = localPred[3:6] - localGt[3:6]
+        absTraErr = absPred[0:3] - absGt[0:3]
+        absRotErr = absPred[3:6] - absGt[3:6]
+
+        tra = np.sqrt(torch.dot(traTensorErr, traTensorErr))
+        rotTensor = np.sqrt(torch.dot(rotTensorErr, rotTensorErr))
+        lossTotal = absTraErr + k*absRotTensor
+        if (onlyAbs == True):
+            lossTotal = 
     return loss
 
 
@@ -82,11 +71,11 @@ def trainModel(model, dataLoaderTrain, dataLoaderTest, device):
             # do i need this below?
             optimizer.zero_grad()  # Zero the parameter gradients
             #print('onias4')
-            outputs = model(images)
+            absPose, localPose = model(images)
             #print("outputs: ", outputs)
             #print("gt: ", poses)
 
-            individualLoss = lossFunctionLocal(outputs, poses)
+            individualLoss = lossFunction(absPose, localPose, poses)
             batchLoss = individualLoss.mean()
             batchLoss.backward()  # Backpropagation
             optimizer.step()  # Optimize the parameters
@@ -105,8 +94,8 @@ def trainModel(model, dataLoaderTrain, dataLoaderTest, device):
         with torch.no_grad():
             for input, target in dataLoaderTest:
                 target = target.to(device)
-                output = model(input)
-                loss = lossFunctionLocal(output, target)
+                absPose, localPose = model(input)
+                loss = lossFunction(absPose, localPose, target)
                 val_loss += loss.item()
         val_loss /= len(dataLoaderTest.dataset)
         if iteration >= numIterations:
@@ -206,10 +195,10 @@ def main():
     tumDatasetTest = CustomTUMDataset(datasetsTest,device)
     train_loader = torch.utils.data.DataLoader(tumDatasetTrain, batch_size=4, shuffle=True)
     test_loader  = torch.utils.data.DataLoader(tumDatasetTest, batch_size=4, shuffle=True)
-    
+
     if (os.path.isfile(opticalFlowModelFile) == False):
         opticalFlowModelFile = opticalFlowModelFile + '.tar'
-    
+
     FlowNet_data = torch.load(opticalFlowModelFile, map_location=torch.device(device))
     print("=> using pre-trained model '{}'".format(FlowNet_data["arch"]))
     FlowNetModel = models.__dict__[FlowNet_data["arch"]](FlowNet_data).to(device)

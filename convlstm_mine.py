@@ -9,6 +9,8 @@ class ConvLSTMCell(nn.Module):
                        kernel_size,
                        padding,
                        frame_size,
+                       batch_size,
+                       device,
                        activation="tanh"):
 
         super(ConvLSTMCell, self).__init__()
@@ -38,7 +40,7 @@ class ConvLSTMCell(nn.Module):
             out_channels=out_channels, # why 4?! read above!
             kernel_size=kernel_size,
             padding=padding)
-        
+
         self.Whi = nn.Conv2d(
             in_channels=in_channels, #we're doing conv of X and H_{k-1} together!
             out_channels=out_channels, # why 4?! read above!
@@ -88,21 +90,25 @@ class ConvLSTMCell(nn.Module):
         nn.init.constant_(self.bc, 0)
         nn.init.constant_(self.bo, 0)
 
+        # Initialize Cell Input
+        self.C = torch.zeros(batch_size, out_channels,
+        frame_size[0], frame_size[1], device=device)
 
-    def forward(self, X, H_prev, C_prev):
+
+    def forward(self, X, H_prev):
 
         # input gate
-        inputGate = torch.sigmoid(self.Wxi(X) + self.Whi(H_prev) + self.W_ci*C_prev + self.bi)
+        inputGate = torch.sigmoid(self.Wxi(X) + self.Whi(H_prev) + self.W_ci*self.C + self.bi)
         # forget gate
-        forgetGate = torch.sigmoid(self.Wxf(X) + self.Whf(H_prev)+ self.W_cf*C_prev + self.bf)
+        forgetGate = torch.sigmoid(self.Wxf(X) + self.Whf(H_prev)+ self.W_cf*self.C + self.bf)
         # C_t
-        C = forgetGate*C_prev + inputGate * self.activation(self.Wxc(X) + self.Whc(H_prev) + self.bc)
+        self.C = forgetGate*self.C + inputGate * self.activation(self.Wxc(X) + self.Whc(H_prev) + self.bc)
         # output state
-        out = torch.sigmoid(self.Wxo(X) + self.Who(H_prev) + self.W_co*C + self.bo)
+        out = torch.sigmoid(self.Wxo(X) + self.Who(H_prev) + self.W_co*self.C + self.bo)
         # hidden state
-        H = out * self.activation(C)
+        H = out * self.activation(self.C)
 
-        return out, H, C
+        return out, H
 
 
 class ConvLSTM(nn.Module):
