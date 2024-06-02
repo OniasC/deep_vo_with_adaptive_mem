@@ -126,18 +126,20 @@ class CustomTUMDataset(Dataset):
                 transforms.Normalize(mean=[0.411, 0.432, 0.45], std=[1, 1, 1]),
             ]
         )
+        listImgsPoses = []
+        items = self.data_list[idx]
+        for item in items:
+            imagesPaths = item[0]
+            pose = item[1]
+            image0 = input_transform(imageio.v2.imread(imagesPaths[0])).to(self.device)
+            image1 = input_transform(imageio.v2.imread(imagesPaths[1])).to(self.device)
+            image = torch.cat([image0, image1])#.unsqueeze(0)
 
-        item = self.data_list[idx]
-        imagesPaths = item[0]
-        pose = item[1]
-        image0 = input_transform(imageio.v2.imread(imagesPaths[0])).to(self.device)
-        image1 = input_transform(imageio.v2.imread(imagesPaths[1])).to(self.device)
-        image = torch.cat([image0, image1])#.unsqueeze(0)
-
-        pose = torch.tensor(pose, dtype=torch.float32)
-        image.to(self.device)
-        pose.to(self.device)
-        return image, pose
+            pose = torch.tensor(pose, dtype=torch.float32)
+            image.to(self.device)
+            pose.to(self.device)
+            listImgsPoses.append((image,pose))
+        return listImgsPoses
 
 def datasetsGet(trainPaths, testPaths):
     datasetsTrain = []
@@ -170,12 +172,32 @@ def averagePoseGet(pose1, pose2, distance1, distance2):
         #newPose.append(pose1[i])
     return tuple(newPose)
 
-def datasetsListGet(paths):
+def are_paths_consistent(file_list):
+
+    if not file_list:
+        return False  # If the list is empty, return True
+
+    # Extract the directory of the first file
+    first_path = os.path.dirname(file_list[0][0][0])
+
+    # Compare the directory of each file to the first path
+    for files, _ in file_list:
+        if os.path.dirname(files[0]) != first_path:
+            return False
+
+    return True
+
+def datasetsListGet(paths, NUM_PAIRS_PER_INPUT = 10):
     '''
     need to capture the images and the ground truth
     input: tuple(frame[k-1], frame[k])
-    output: tuple(7d pose - xyz + 4 quaternions)'''
+    output: tuple(6d pose - xyz + 3 angles)
+
+    the input to the neural net is a sequence of 11 frames
+    so we're gonna make a list of 10 tuples (input, gt)
+    '''
     datasetIO = []
+    datasetListOfLists = []
     for path in paths:
         gtDict = read_gt_file_to_dict(path + 'groundtruth.txt')
         gtDictSorted = sorted(gtDict)
@@ -204,4 +226,16 @@ def datasetsListGet(paths):
             input = (path + rgbDict[framePrevTimeStamp], path + rgbDict[frameCurrTimeStamp])
             datasetIO.append((input,gtPose))
         print('\n')
-    return datasetIO
+
+    count = 0
+    tempList = []
+    for element in datasetIO:
+        tempList.append(element)
+        count += 1
+        if count == NUM_PAIRS_PER_INPUT:
+            if are_paths_consistent(tempList)==True:
+                datasetListOfLists.append(tempList)
+            tempList = []
+            count = 0
+
+    return datasetListOfLists

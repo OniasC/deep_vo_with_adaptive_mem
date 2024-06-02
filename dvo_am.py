@@ -26,7 +26,16 @@ from deep_vo_full import DvoAm_Full
 
 
 def lossFunction(absPredList, localPredList, gt, onlyAbs = False, k = 1): #TUM uses k = 1
+    '''
+    L_local  = (1/t)\sum_{i from 1 to t}(||pos_rel - pos_rel_gt|| + k*||ang_rel - ang_rel_gt||)
+    L_global = \sum_{i from 1 to t}(1/i)(||pos_abs - pos_abs_gt|| + k*||ang_abs - ang_abs_gt||)
+    L_total = L_local + L_global (for training)
+    L_total = L_global (for testing. "During the testing process, only the refined absolute poses are used as
+                                        final results")
+    '''
     lossPerBatch = []
+    for i in range(len(absPredList)):
+
     for batchIndex in range(absPredList.shape[0]):
         absPred   = absPredList[batchIndex]
         localPred = localPredList[batchIndex]
@@ -42,7 +51,7 @@ def lossFunction(absPredList, localPredList, gt, onlyAbs = False, k = 1): #TUM u
         rotTensor = np.sqrt(torch.dot(rotTensorErr, rotTensorErr))
         lossTotal = absTraErr + k*absRotTensor
         if (onlyAbs == True):
-            lossTotal = 
+            lossTotal = 0
     return loss
 
 
@@ -62,8 +71,14 @@ def trainModel(model, dataLoaderTrain, dataLoaderTest, device):
 
         train_loss = 0
         model.train()
-        for images, poses in dataLoaderTrain:
-            poses = poses.to(device)
+
+        for sequence in dataLoaderTrain:
+            framesSeq = []
+            gtsSeq = []
+            for frames, gt in sequence:
+                framesSeq.append(frames)
+                gtsSeq.append(gt.to(device))
+
             if iteration >= numIterations:
                 break
             #images, poses = images.cuda(), poses.cuda()  # Move data to GPU if available
@@ -71,11 +86,11 @@ def trainModel(model, dataLoaderTrain, dataLoaderTest, device):
             # do i need this below?
             optimizer.zero_grad()  # Zero the parameter gradients
             #print('onias4')
-            absPose, localPose = model(images)
+            absPoseList, localPoseList = model(framesSeq)
             #print("outputs: ", outputs)
             #print("gt: ", poses)
 
-            individualLoss = lossFunction(absPose, localPose, poses)
+            individualLoss = lossFunction(absPoseList, localPoseList, gtsSeq)
             batchLoss = individualLoss.mean()
             batchLoss.backward()  # Backpropagation
             optimizer.step()  # Optimize the parameters
@@ -224,7 +239,6 @@ def main():
             subset_state_dict[name] = param
     #print(subset_state_dict)
 
-    print('onias1')
     new_state_dict = model2.state_dict()
     for name, param in subset_state_dict.items():
         #print(name)
@@ -233,7 +247,7 @@ def main():
             new_state_dict[newName].copy_(param) #copy_() performs copy in place
     print(new_state_dict.keys())
     model2.load_state_dict(new_state_dict)
-    print('onias2')
+
     print(datetime.datetime.now())
     if (isTrain):
         print("training")

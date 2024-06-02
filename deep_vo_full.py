@@ -98,7 +98,6 @@ class DvoAm_Full(nn.Module):
                 constant_(m.bias, 0)
 
         # Tracking
-        self.hiddenLocalLstm = torch.zeros((4,1024,8,10), device=self.device)
         self.localConvLSTM = ConvLSTMCell(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), frame_size=(8,10), batch_size=4, device=device, activation="tanh") # what do these inputs mean??
         self.localGap = nn.AvgPool3d((1,8,10))
         # (1,1,1024)
@@ -121,7 +120,6 @@ class DvoAm_Full(nn.Module):
         #output do encodingPlusTracking eh [4,6] 4 batches
 
         # convlstm2.py
-        self.hiddenA = torch.zeros((4,1024,8,10), device=self.device)
         self.convLSTM = ConvLSTMCell(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding=(1,1), frame_size=(8,10), batch_size=4, device=device, activation="tanh") # what do these inputs mean??
 
         self.refConv1 = conv(self.batchNorm, in_planes=2048, out_planes=1024, kernel_size=3, stride=1)
@@ -144,7 +142,7 @@ class DvoAm_Full(nn.Module):
                 constant_(m.weight, 1)
                 constant_(m.bias, 0)
 
-    def forward(self, x):
+    def forward(self, inputSequence):
         '''
         para o frame K:
         ---tracking---
@@ -167,33 +165,43 @@ class DvoAm_Full(nn.Module):
 
 
         '''
-        #encoding
-        self.imgFlow = self.encoding(x)
+        self.localConvLSTM.C = torch.zeros(input.size(0), 1024,
+                                            8, 10, device=self.device)
+        self.hiddenLocalLstm = torch.zeros((4,1024,8,10), device=self.device)
+        self.convLSTM.C = torch.zeros(input.size(0), 1024,
+                                            8, 10, device=self.device)
+        self.hiddenA = torch.zeros((4,1024,8,10), device=self.device)
 
-        #tracking
+        absPoseList = []
+        localPoseList = []
+        for input in inputSequence:
+            #encoding
+            self.imgFlow = self.encoding(input)
 
-        #transform a [4, 1024, 8, 10] tensor into a [4, 1024, 1, 8, 10]
-        self.outLocalLstm, self.hiddenLocalLstm = self.localConvLSTM(self.imgFlow, self.hiddenLocalLstm)
-        localPose = self.se3(self.outLocalLstm, self.localGap, self.localFc)
-        #print("local pose: ", localPose)
+            #tracking
 
-        #refining
+            #transform a [4, 1024, 8, 10] tensor into a [4, 1024, 1, 8, 10]
+            self.outLocalLstm, self.hiddenLocalLstm = self.localConvLSTM(self.imgFlow, self.hiddenLocalLstm)
+            localPose = self.se3(self.outLocalLstm, self.localGap, self.localFc)
 
-        newMemoryCandidate = (self.hiddenLocalLstm, localPose)
-        #print(newHiddenState)
+            #refining
 
-        self.memory = self.memoryUpdate(self.memory, newMemoryCandidate, x.size(0))
+            newMemoryCandidate = (self.hiddenLocalLstm, localPose)
 
-        M_dash = self.guideMemory(self.outA, self.hiddenLocalLstm, self.hiddenLocalLstm.shape) #outPrev or localPose??
-        if (len(self.memory) == 0):
-            self.outA = self.outLocalLstm
-        x_dash = self.guideEncoding(self.imgFlow, self.outA)
-        tempTensor = torch.cat((x_dash, M_dash), dim=1) # whatever is the dim of number of channels.
-        xA = self.refConv2(self.refConv1(tempTensor))
-        self.outA, self.hiddenA = self.convLSTM(xA, self.hiddenA)
-        absPose = self.se3(self.outA, self.gap, self.fc)
+            self.memory = self.memoryUpdate(self.memory, newMemoryCandidate, input.size(0))
 
-        return absPose, localPose
+            M_dash = self.guideMemory(self.outA, self.hiddenLocalLstm, self.hiddenLocalLstm.shape) #outPrev or localPose??
+            if (len(self.memory) == 0):
+                self.outA = self.outLocalLstm
+            x_dash = self.guideEncoding(self.imgFlow, self.outA)
+            tempTensor = torch.cat((x_dash, M_dash), dim=1) # whatever is the dim of number of channels.
+            xA = self.refConv2(self.refConv1(tempTensor))
+            self.outA, self.hiddenA = self.convLSTM(xA, self.hiddenA)
+            absPose = self.se3(self.outA, self.gap, self.fc)
+
+            absPoseList.append(absPose)
+            localPoseList.append(localPose)
+        return absPoseList, localPoseList
 
     def encoding(self, input):
         out_conv1   = self.conv1(input)
@@ -232,12 +240,12 @@ class DvoAm_Full(nn.Module):
             isKeyFramePerBatch.append(False)
 
         if(len(memory) == 0):
-            for iter in range(len(isKeyFramePerBatch)):
+            for iter in range(numBatches):
                 isKeyFramePerBatch[iter] = True
         else:
             # content of memory are the (hidden states of key frames, pose)
             lastMemory = memory[-1]
-            for i in range(len(isKeyFramePerBatch)):
+            for i in range(numBatches):
                 lastMemSingleBatch = lastMemory[i].unsqueeze(0)  # Extract a single batch, maintain 4D shape
                 newMemSingleBatch = newMemoryCandidate[i].unsqueeze(0)  # Extract a single batch, maintain 4D shape
                 isKeyFramePerBatch[i] = self.keyFrameCriteria(newMemSingleBatch, lastMemSingleBatch)
@@ -249,6 +257,7 @@ class DvoAm_Full(nn.Module):
             self.memory[i][-1] = newMemoryCandidate[i]
         else:
             # size isnt max yet, so append to it
+            # TODO: add condition to only append if isKeyFramePerBatch is true! Check if this check is needed!
             self.memory.append(newMemoryCandidate)
         newMemory = self.memory
         return newMemory
